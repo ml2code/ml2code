@@ -1,0 +1,8 @@
+numpy
+tqdm
+onnx
+onnxruntime
+onnx2torch
+torch
+#for efficientnet demo cv2
+opencv-python

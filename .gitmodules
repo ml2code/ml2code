@@ -1,0 +1,6 @@
+[submodule "tinygrad"]
+	path = tinygrad
+	url = git@github.com:jaredeh/tinygrad.git
+[submodule "tinygrad_external"]
+	path = tinygrad_external
+	url = git@github.com:jaredeh/tinygrad.git
