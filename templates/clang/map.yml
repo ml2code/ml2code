@@ -1,0 +1,28 @@
+---
+modules:
+  library:
+    name: "{{settings['model_name']}}"
+    files:
+      - path: model.h
+        template: model.h.j2
+        options:
+          noweights: False
+      - path: model.h
+        template: model.h.noweights.j2
+        options:
+          noweights: True
+      - path: weights.h
+        template: weights.h.j2
+        options:
+          noweights: False
+  test:
+    name: "{{settings['model_name']}}_test"
+    files:
+      - path: main.c
+        template: main.c.j2
+        options:
+          noweights: False
+      - path: main.c
+        template: main.c.noweights.j2
+        options:
+          noweights: True

@@ -1,0 +1,60 @@
+use model::Net;
+use std::env;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Write};
+
+fn main() -> io::Result<()> {
+  // Initialize network
+  let mut net = Net::new();
+
+  // Create an input buffer of {{input.size}} {{input.type.name}}s
+  let mut input = [0.0; {{input.size}}];
+
+  // Create an output buffer of {{output.size}} {{output.type.name}}s
+  let mut output = [0.0; {{output.size}}];
+
+  // Get the filename from command line args
+  let args: Vec<String> = env::args().collect();
+  if args.len() < 2 {
+    eprintln!("Usage: {} <input_file> [output_file] [count]", args[0]);
+    return Ok(());
+  }
+  let input_filename = &args[1];
+  let mut output_filename = &"output.json".to_string();
+  if args.len() > 2 {
+    output_filename = &args[2];
+  }
+  let mut count = 1;
+  if args.len() > 3 {
+    count = args[3].parse::<i32>().unwrap();
+  }
+
+  // Read inputs from a binary file
+  let mut f = File::open(input_filename)?;
+  let mut input_bytes = Vec::new();
+  f.read_to_end(&mut input_bytes)?;
+  if input_bytes.len()!= {{input.size * input.type.size}} {
+    return Err(io::Error::new(io::ErrorKind::Other, "Invalid input file size"));
+  }
+
+  // Now map the input_bytes into input
+  for i in 0..({{input.size}}) {
+    input[i] = {{input.type.name}}::from_le_bytes([{{rendered.input_bytes_conversion}}]);
+  }
+
+  // Run the network
+  for _ in 0..count {
+    net.run(&input, &mut output);
+  }
+
+  let mut output_file = OpenOptions::new()
+    .write(true)
+    .create(true)
+    .open(output_filename)?;
+  for o in output.iter() {
+      output_file.write_all(&o.to_le_bytes())?;
+  }
+
+  Ok(())
+}
+

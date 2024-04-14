@@ -1,0 +1,9 @@
+[package]
+name = "{{crate_name}}"
+version = "{{settings['version']}}"
+authors = ["{{settings['author']}}"]
+edition = "2021"
+
+[dependencies]
+{{settings['model_name']}} = { path = "../{{settings['model_name']}}" }
+

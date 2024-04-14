@@ -2,7 +2,6 @@
 #from tinygrad.extras import export_model
 import os
 import argparse
-import time
 from ml2code.models import OnnxModel, ModelData, compare_lists, set_tinygrad_device
 from ml2code.rust import RustSrc
 from ml2code.clang import ClangSrc
@@ -13,6 +12,7 @@ parser.add_argument("--model", type=str, required=True, help="Path to model file
 parser.add_argument("--language", type=str, default="rust", choices=["rust", "clang"], help="Language to generate")
 parser.add_argument("--test", action="store_true", help="Test the tinygrad conversions")
 parser.add_argument("--benchmark", action="store_true", help="Benchmark the models")
+parser.add_argument("--build", action="store_true", help="Build the generated code to a binary")
 parser.add_argument("--count", type=int, default=1, help="How many times to run the test")
 parser.add_argument("--version", type=str, default="0.1.0", help="Version number for the code")
 parser.add_argument("--name", type=str, default="model", help="Name of the model")
@@ -40,9 +40,14 @@ t = om.tiny()
 tc = om.torch()
 
 print("----generate----------------")
-c = RustSrc(t, settings)
+if args.language == "rust":
+  c = RustSrc(t, settings)
+elif args.language == "clang":
+  c = ClangSrc(t, settings)
+else:
+  raise Exception("Unknown language: " + args.language)
 c.generate()
-if args.test or args.benchmark:
+if args.test or args.benchmark or args.build:
   print("----build----------------")
   c.build()
 if args.test:
@@ -89,3 +94,6 @@ if args.benchmark:
   set_tinygrad_device(args.language.upper())
   outputs[f"tiny {args.language} compiled"] = c.benchmark(i, count=args.count)
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
+
+if args.build:
+  print(f"binary at: {c.test_bin_path}")

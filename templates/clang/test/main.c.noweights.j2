@@ -1,0 +1,75 @@
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include "../{{settings['model_name']}}/model.h"
+
+int main(int argc, char *argv[])
+{
+  if (argc < 3 || argc > 5)
+  {
+    printf("Usage: %s <input_file> <weights_file> [output_file] [count]\n", argv[0]);
+    return 1;
+  }
+
+  const char *input_file = argv[1];
+  const char *weights_filename = argv[2];
+  const char *output_file = (argc > 3) ? argv[3] : "output.bin";
+  int count = (argc == 5) ? atoi(argv[4]) : 1;
+
+  {{input.type.name}} inputs[{{input.size}}];
+  {{output.type.name}} outputs[{{output.size}}];
+  {{weight.type.name}} *weights;
+
+  // Read weights from file
+  weights = ({{weight.type.name}} *)malloc({{weight.size}} * sizeof({{weight.type.name}}));
+  FILE *fp = fopen(weights_filename, "rb");
+  if (!fp)
+  {
+    printf("Failed to open weights file: %s\n", weights_filename);
+    return 1;
+  }
+  size_t read_count = fread(weights, sizeof({{weight.type.name}}), {{weight.size}}, fp);
+  fclose(fp);
+  if (read_count != {{weight.size}})
+  {
+    printf("Failed to read {{weight.size}} {{weight.type.name}} from weights file\n");
+    return 1;
+  }
+
+  // Load weights into model
+  initialize_model(weights);
+  free(weights);
+
+  // Read input from file
+  fp = fopen(input_file, "rb");
+  if (!fp)
+  {
+    printf("Failed to open input file: %s\n", input_file);
+    return 1;
+  }
+  read_count = fread(inputs, sizeof({{input.type.name}}), {{input.size}}, fp);
+  fclose(fp);
+  if (read_count != {{input.size}})
+  {
+    printf("Failed to read {{input.size}} {{input.type.name}} from input file\n");
+    return 1;
+  }
+
+  // Run inference
+  for (int i = 0; i < count; i++)
+  {
+    net(inputs, outputs);
+  }
+
+  // Write output to file
+  fp = fopen(output_file, "wb");
+  if (!fp)
+  {
+    printf("Failed to open output file: %s\n", output_file);
+    return 1;
+  }
+  fwrite(outputs, sizeof({{output.type.name}}), {{output.size}}, fp);
+  fclose(fp);
+
+  return 0;
+}

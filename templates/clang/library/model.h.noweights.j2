@@ -1,0 +1,17 @@
+#include <stdbool.h>
+#include <tgmath.h>
+#define max(x,y) ((x>y)?x:y)
+#define half __fp16
+
+{{rendered.buffer_initializers}}
+
+{{rendered.functions}}
+
+void initialize_model({{weight.type.name}} *weights) {
+{{rendered.weights_initialization}}
+}
+
+void net({{rendered.net_run_args}}) {
+{{rendered.net_run_body}}
+}
+

@@ -71,13 +71,15 @@ def make_np_inputs(onnx_model, seed=123):
 
 class ModelData:
 
-  def __init__(self, onnx=None, binary=None, model=None, seed=123):
+  def __init__(self, onnx=None, binary=None, json=None, model=None, seed=123):
     if onnx is not None:
       self.np_inputs = onnx
     elif binary is not None:
       self.from_binary(binary)
     elif model is not None:
       self.from_model(model, seed)
+    elif json is not None:
+      self.from_json(json)
     else:
       raise Exception("Must provide either onnx, binary or model")
 
@@ -106,6 +108,10 @@ class ModelData:
 
   def from_model(self, model, seed):
     self.np_inputs = make_np_inputs(model, seed=seed)
+
+  def from_json(self, model):
+    a = json.loads(model)
+    self.np_inputs = np.array(a)
 
   def python(self):
     return list(flatten(json.loads(self.json())))

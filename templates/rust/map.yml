@@ -1,0 +1,40 @@
+---
+modules:
+  library:
+    name: "{{settings['model_name']}}"
+    files:
+      - path: Cargo.toml
+        template: Cargo.toml.j2
+      - path: src/lib.rs
+        template: lib.rs.j2
+        options:
+          noweights: False
+      - path: src/lib.rs
+        template: lib.rs.noweights.j2
+        options:
+          noweights: True
+      - path: src/model.rs
+        template: model.rs.j2
+        options:
+          noweights: False
+      - path: src/model.rs
+        template: model.rs.noweights.j2
+        options:
+          noweights: True
+      - path: src/weights.rs
+        template: weights.rs.j2
+        options:
+          noweights: False
+  test:
+    name: "{{settings['model_name']}}_test"
+    files:
+      - path: Cargo.toml
+        template: Cargo.toml.j2
+      - path: src/main.rs
+        template: main.rs.j2
+        options:
+          noweights: False
+      - path: src/main.rs
+        template: main.rs.noweights.j2
+        options:
+          noweights: True

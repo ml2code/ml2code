@@ -1,0 +1,26 @@
+#![allow(unused_mut,unused_parens)]
+use crate::weights::{*};
+
+{{rendered.functions}}
+
+pub struct Net {
+{{rendered.net_struct_members}}
+}
+
+impl Net {
+  pub fn new() -> Self {
+    Net {
+{{rendered.net_struct_initializers}}
+    }
+  }
+
+  #[allow(dead_code)]
+  pub fn initialize_weights(&mut self, weights: &[{{weight.type.name}}]) {
+{{rendered.net_weights_initialization}}
+  }
+
+  pub fn run(&mut self, {{rendered.net_run_args}}) {
+{{rendered.net_run_body}}
+  }
+}
+
