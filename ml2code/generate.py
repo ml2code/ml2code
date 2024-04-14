@@ -1,10 +1,18 @@
+from collections import namedtuple
+import jinja2
+import os
+import time
+
+# Tinygrad includes
 from extra.export_model import compile_net
 #from tinygrad.nn.state import get_state_dict
-from .rust import rust_generate
+
+GeneratorFunctions = namedtuple("GeneratorFunctions", "functions statements bufs bufs_to_save inputs outputs")
 
 class SrcGenerator:
-  def __init__(self, tinymodel):
+  def __init__(self, tinymodel, settings):
     self.model = tinymodel.model
+    self.settings = settings
     self.runner = tinymodel.runner
     self.special_names = tinymodel.special_names
 
@@ -13,23 +21,27 @@ class SrcGenerator:
     #state = get_state_dict(self.model)
     input_names = []
     output_names = []
-    print("special names: ", self.special_names)
     for _,name in self.special_names.items():
       if "input" in name: input_names.append(name)
       if "output" in name: output_names.append(name)
     inputs = {input:bufs[input][0] for input in input_names}
     outputs = {output:bufs[output][0] for output in output_names}
-    return functions, statements, bufs, bufs_to_save, inputs, outputs
+    return GeneratorFunctions(functions, statements, bufs, bufs_to_save, inputs, outputs)
 
+  def render_jinja(self, template, metadata):
+    if os.path.exists(template):
+      with open(template, 'r') as f:
+        j2 = f.read()
+    else:
+      j2 = template
+    template = jinja2.Environment(loader=jinja2.BaseLoader).from_string(j2)
+    output = template.render(metadata)
+    return output
 
-class RustSrc(SrcGenerator):
-  def generate(self, encoded_weights=True, model_name="model", export_dir="export"):
-    functions, statements, bufs, bufs_to_save, inputs, outputs = self.generate_functions()
-    print(f"input: {inputs}")
-    print(f"types: {type(inputs)}")
-    print(f"output: {outputs}")
-    print(f"types: {type(outputs)}")
-    print(f"bufs: {bufs.keys()}")
-    print(f"bufs_to_save: {bufs_to_save.keys()}")
-    return rust_generate(functions, statements, bufs, bufs_to_save, inputs, outputs, encoded_weights=encoded_weights, model_name=model_name, export_dir=export_dir)
-
+  def benchmark(self, input, count=1):
+    input_path = os.path.join(os.getcwd(),"output.bin")
+    with open(input_path, "wb") as f:
+      f.write(input.binary())
+    st = time.time()
+    self.run(input_path, count=count)
+    return time.time() - st

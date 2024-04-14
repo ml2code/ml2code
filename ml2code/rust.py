@@ -1,153 +1,185 @@
-from tinygrad.runtime.ops_rust import RUST_TYPE_MAP
 import os
+import struct
+import yaml
+import time
+import subprocess
+from collections import namedtuple
+from .generate import SrcGenerator
 
 
-def export_model_rust(functions, statements, bufs, bufs_to_save, input_names, output_names, encoded_weights=True):
-  type_map = RUST_TYPE_MAP
-  def for_bufs(lda, name_filter=[]):
-    codeblock = []
-    for name,(len,dtype,_key) in bufs.items():
-      if name not in input_names+output_names+name_filter: codeblock.append(lda(name,len,dtype))
-    return codeblock
-
-  # main struct definition
-  rs_struct = ["pub struct Net {"] + for_bufs(lambda name,len,dtype: f"  {name}: [{type_map[dtype][0]}; {int(len/type_map[dtype][1])}],") +  ["}"]
-  #   new() init fn
-  if encoded_weights: l = lambda name,len,dtype: f"      {name}: {name.upper()}_DATA,"
-  else: l = lambda name,len,dtype: f"      {name}: [0.0; {int(len/type_map[dtype][1])}],"
-  rs_new = ["  pub fn new() -> Self {","    Net {",] + for_bufs(l) + ["    }","  }"]
-  #   weights both a fn to load and optional static arrays
-  rs_weights = []
-  if encoded_weights:
-    rs_weights += ["// Encoded Weights"]
-    l = lambda name,len,dtype: f"const {name.upper()}_DATA: [{type_map[dtype][0]}; {int(len/type_map[dtype][1])}] = [0.0; {int(len/type_map[dtype][1])}];"
-    rs_weights += for_bufs(l,list(bufs_to_save.keys()))
-  rs_initw = ["  #[allow(dead_code)]",f"  pub fn initialize_weights(&mut self, weights: &[{type_map[bufs_to_save[list(bufs_to_save.keys())[0]].dtype][0]}]) {{"]
-  weights = bytes()
-  for name,cl in bufs_to_save.items():
-    rs_initw += [f"    self.{name}.copy_from_slice(&weights[{len(weights)//type_map[cl.dtype][1]}..{len(weights)//type_map[cl.dtype][1]+cl.size}]);"]
-    weight = bytes(cl._buf)
-    if encoded_weights:
-      rs_weights += [f"const {name.upper()}_DATA: [{type_map[cl.dtype][0]}; {cl.size}] = [{','.join([str(struct.unpack('f', weight[i:i+4])[0]) for i in range(0, len(weight), type_map[cl.dtype][1])])}];"]
-    weights += weight
-  rs_initw += ["  }"]
-  #   fn to run the network
-  inputs = ", ".join([f"{name}: &[{type_map[dtype][0]}; {int(len/type_map[dtype][1])}]" for name, (len, dtype, _key) in bufs.items() if name in input_names])
-  outputs = ", ".join([f"{name}: &mut [{type_map[dtype][0]}; {int(len/type_map[dtype][1])}]" for name, (len, dtype, _key) in bufs.items() if name in output_names])
-  rs_run = [f"  pub fn run(&mut self, {inputs}, {outputs}) {{"]
-  for (name, args, _, _) in statements:
-    params = ['&self.'+arg if arg not in input_names+output_names else arg for arg in args]
-    params[0] = params[0].replace('&self.', '&mut self.') # first arg is mutable
-    rs_run += [f"    {name}({', '.join(params)});"]
-  rs_run += ["  }"]
-  rs_impl = ["impl Net {"] + rs_new + [""] + rs_initw + [""] + rs_run + ["}"]
-  fns = []
-  for f in functions.values(): fns += [f, ""]
-  rsprog = fns + rs_weights + [""] + rs_struct + [""] + rs_impl + [""]
-  return '\n'.join(rsprog)
+# Tinygrad includes
+from tinygrad.runtime.ops_rust import RUST_TYPE_MAP
 
 
-def rust_generate(functions, statements, bufs, bufs_to_save, inputs, outputs, encoded_weights=True, crate=True, model_name="model", export_dir=""):
-  input_name = list(inputs.keys())[0]
-  output_name = list(outputs.keys())[0]
-  input_type = RUST_TYPE_MAP[bufs[input_name][1]]
-  output_type = RUST_TYPE_MAP[bufs[output_name][1]]
-  input_len = int(inputs[input_name]//input_type[1])
-  output_len = int(outputs[output_name]//output_type[1])
-  wtype = input_type
+RustRenderedCode = namedtuple("RustRenderedCode", "net_struct_members net_struct_initializers net_weights_initialization net_run_args net_run_body weights_bytes_conversion input_bytes_conversion weights_code functions")
+DTypeTuple = namedtuple("DTypeTuple", "name size")
+IOTuple = namedtuple("IOTuple", "name size type")
 
-  rs_code = export_model_rust(functions, statements, bufs, bufs_to_save,  list(inputs.keys()), list(outputs.keys()), encoded_weights=True)
 
-  # test 
-  rs_main = ["use std::fs::File;","use std::io::{self, Read};",""] if not encoded_weights else ["use std::io::{self};",""]
-  if not crate: rs_main += [rs_code,""]
-  rs_main += ["// Simple testing setup using stdin/stdout"]
-  rs_main += ["fn main() -> io::Result<()> {"]
-  rs_main += ["  // Initialize network","  let mut net = Net::new();",""]
-  rs_main += [f"  // Create an input buffer of {input_len} {input_type[0]}s"]
-  rs_main += [f"  let mut input = [0.0; {input_len}];",f"  let mut output = [0.0; {output_len}];","  let mut line = String::new();",""]
-  if not encoded_weights:
-    # write the weights to disk
-    weights = bytes()
-    for name,cl in bufs_to_save.items(): weights += bytes(cl._buf)
-    with open("/tmp/rust_weights", "wb") as f:
-      f.write(weights)
-    rs_main += ["  // Read weights from a file","  let mut f = File::open(\"/tmp/rust_weights\")?;","  let mut weights_bytes = Vec::new();"]
-    rs_main += ["  f.read_to_end(&mut weights_bytes)?;","",f"  // Convert bytes to {wtype[0]}"]
-    rs_main += [f"  let mut weights: Vec<{wtype[0]}> = Vec::with_capacity(weights_bytes.len() / {wtype[1]});"]
-    rs_main += ["  // Now map the weights_bytes into weights",f"  for i in 0..(weights_bytes.len()/{wtype[1]}) {{"]
-    rs_main += [f"    weights.push({wtype[0]}::from_le_bytes([{','.join(['weights_bytes[i*4+'+str(i)+']' for i in range(wtype[1])])}]));","  }",""]
-    rs_main += ["  // Initialize the network with weights","  net.initialize_weights(&weights);",""]
-  rs_main += ["  // Get inputs","  for i in 0..input.len() {","    io::stdin().read_line(&mut line).unwrap();"]
-  rs_main += ["    input[i] = line.trim().parse::<f32>().unwrap();","    line.clear();","  }",""]
-  rs_main += ["  // Run the network","  net.run(&input, &mut output);","","  // Print the output"]
-  rs_main += ["  let outputstr = output.iter().map(|item| item.to_string()).collect::<Vec<_>>().join(\" \");","  print!(\"{}\", outputstr);",""]
-  rs_main += ["  Ok(())","}"]
+class RustSrc(SrcGenerator):
 
-  # export the code if not a crate, just as a string
-  if not crate:
-    prg = '\n'.join(rs_main)
-    return prg
-
-  # Isolate weights, if encoded, so we can put them in a separate file
-  weights = []
-  if encoded_weights:
-    rs_code_new = [[],[]]
-    for line in rs_code.split("\n"):
-      if len(weights) == 0 and line != "// Encoded Weights":
-        rs_code_new[0].append(line)
+  def render_code(self, g, input, output, weight):
+    input_names = list(g.inputs.keys())
+    output_names = list(g.outputs.keys())
+    # Iterate through the buffers to render out various chunks
+    net_struct_members = []
+    net_struct_initializers = []
+    net_run_args = []
+    for name,(length,dtype,_) in g.bufs.items():
+      dtype_name = RUST_TYPE_MAP[dtype][0]
+      count = int(length/RUST_TYPE_MAP[dtype][1])
+      # Handle the commandline arg for the run() function
+      if name in input_names:
+        net_run_args.append(f"{name}: &[{dtype_name}; {count}]")
         continue
-      if line == "": rs_code_new[1].append(line)
-      if len(rs_code_new[1]) == 0: weights.append(f"pub {line}" if len(weights) != 0 else line)
-      else: rs_code_new[1].append(line)
-    rs_code = "\n".join(["use crate::weights::{*};",""] + rs_code_new[0] + rs_code_new[1])
+      if name in output_names:
+        net_run_args.append(f"{name}: &mut [{dtype_name}; {count}]")
+        continue
+      # Construct a list out the buffers for the rust struct
+      net_struct_members.append(f"{' '*2}{name}: Box<[{dtype_name}; {count}]>,")
+      # Construct a list of initializers for the rust struct,
+      #  either zero or consts with encoded weights
+      if not self.settings['noweights'] and name in list(g.bufs_to_save.keys()):
+        line = f"{' '*6}{name}: Box::new({name.upper()}_DATA),"
+      else:
+        line = f"{' '*6}{name}: Box::new([0.0; {count}]),"
+      net_struct_initializers.append(line)
+    net_struct_members = "\n".join(net_struct_members)
+    net_struct_initializers = "\n".join(net_struct_initializers)
+    net_run_args = ", ".join(net_run_args)
+    # Iterate through the bufs_to_save to render the weight initialization code, and the consts for the weights
+    net_weights_initialization = []
+    weights_code = []
+    weights = bytes()
+    for name,cl in g.bufs_to_save.items():
+      dtype_size = RUST_TYPE_MAP[cl.dtype][1]
+      dtype_name = RUST_TYPE_MAP[cl.dtype][0]
+      start = int(len(weights)/dtype_size)
+      # Construct the code to initialize the weights
+      net_weights_initialization.append(f"{' '*4}self.{name}.copy_from_slice(&weights[{start}..{start+cl.size}]);")
+      weight_buf = bytes(cl._buf)
+      # Encode the weights
+      wbytes = [str(struct.unpack('f', weight_buf[i:i+4])[0]) for i in range(0, len(weight_buf), dtype_size)]
+      weights_code.append(f"pub const {name.upper()}_DATA: [{dtype_name}; {cl.size}] = [{','.join(wbytes)}];")
+      weights += weight_buf
+    # Writes the weights to disk if they aren't encoded
+    if self.settings['noweights']:
+      self.weights_filename = os.path.join(self.settings['export_dir'], "weights.bin")
+      with open(self.weights_filename, "wb") as f:
+        f.write(weights)
+    else:
+      self.weights_filename = None
+    net_weights_initialization = "\n".join(net_weights_initialization)
+    weights_code = "\n".join(weights_code)
+    # Construct the body of the run function
+    net_run_body = []
+    statement_names = [name for (name, args, _, _) in g.statements]
+    for (name, args, _, _) in g.statements:
+      fixed_name = name.lower()
+      if name != fixed_name and fixed_name in statement_names:
+        raise Exception(f"Fixed version of {name} '{fixed_name}' is already used")
+      params = ['&self.'+arg if arg not in input_names+output_names else arg for arg in args]
+      params[0] = params[0].replace('&self.', '&mut self.') # first arg is mutable
+      net_run_body.append(f"{' '*4}{fixed_name}({', '.join(params)});")
+    net_run_body = "\n".join(net_run_body)
+    # Construct a little bit of code to convert the weights from bytes
+    weights_bytes_conversion = []
+    for i in range(weight.type.size):
+      weights_bytes_conversion.append(f"weights_bytes[i*4+{str(i)}]")
+    weights_bytes_conversion = ", ".join(weights_bytes_conversion)
+    # Construct a little bit of code to convert the input from bytes
+    input_bytes_conversion = []
+    for i in range(input.type.size):
+      input_bytes_conversion.append(f"input_bytes[i*4+{str(i)}]")
+    input_bytes_conversion = ", ".join(input_bytes_conversion)
+    # Clean up the functions
+    functions = []
+    for k,fn in g.functions.items():
+      # clean out the CDLL stuff
+      fn = fn.replace("#[no_mangle]\n", "")
+      fn = fn.replace("extern \"C\" ", "")
+      fn = fn.replace(k, k.lower())
+      functions.append(fn)
+    functions = "\n\n".join(functions)
+    return RustRenderedCode(net_struct_members, net_struct_initializers, net_weights_initialization, net_run_args, net_run_body, weights_bytes_conversion, input_bytes_conversion, weights_code, functions)
 
-  ## Make the main Rust crate
-  crate_path = os.path.join(export_dir,model_name)
-  os.makedirs(crate_path, exist_ok=True)
-  crate_src_path = os.path.join(crate_path, "src")
-  os.makedirs(crate_src_path, exist_ok=True)
+  def get_variable_tuples(self, g):
+    input_name = list(g.inputs.keys())[0]
+    output_name = list(g.outputs.keys())[0]
+    input_type = RUST_TYPE_MAP[g.bufs[input_name][1]]
+    output_type = RUST_TYPE_MAP[g.bufs[output_name][1]]
+    input_len = int(g.inputs[input_name]//input_type[1])
+    output_len = int(g.outputs[output_name]//output_type[1])
+    weight_len = 0
+    for _,cl in g.bufs_to_save.items():
+      weight_len += cl.size
+    input = IOTuple(input_name, input_len, DTypeTuple(input_type[0],input_type[1]))
+    output = IOTuple(output_name, output_len, DTypeTuple(output_type[0],output_type[1]))
+    weight = IOTuple('weight', weight_len, DTypeTuple(input_type[0],input_type[1])) # HACK assume input type for weights
+    return input, output, weight
 
-  # Make main crate Cargo.toml file
-  cargo_toml = ["[package]",f"name = \"{model_name}\"","version = \"0.1.0\"","authors = [\"<NAME> <<EMAIL>>\"]","edition = \"2021\"",""]
-  with open(os.path.join(crate_path, "Cargo.toml"), "w") as f:
-    f.write('\n'.join(cargo_toml))
+  def metadata(self,g):
+    input, output, weight = self.get_variable_tuples(g)
+    rendered = self.render_code(g, input, output, weight)
+    metadata = {'input': input, 'output': output, 'weight': weight, 'rendered': rendered, 'settings': self.settings}
+    return metadata
 
-  # Make the src/model.rs file
-  with open(os.path.join(crate_src_path, "model.rs"), "w") as f:
-      f.write("#![allow(unused_mut,unused_parens)]\n"+rs_code)
+  def generate_file(self, crate_name, module_name, file, g, metadata):
+    # Check if we should skip this file
+    if file.get("options", None) is not None:
+      for k,v in file["options"].items():
+        s = self.settings.get(k, None)
+        if s is None: continue
+        if s != v: return
+    metadata['crate_name'] = crate_name
+    template = os.path.join(self.settings["template_dir"], module_name, file["template"])
+    output_path = os.path.join(self.settings["export_dir"], crate_name, file["path"])
+    # create the directory if it doesn't exist
+    output_dir = os.path.dirname(output_path)
+    if not os.path.exists(output_dir):
+      os.makedirs(output_dir)
+    # Render the code
+    rendered_file = self.render_jinja(template, metadata)
+    # Write the code to the file
+    with open(output_path, "w") as f:
+      f.write(rendered_file)
 
-  if encoded_weights:
-    # Make the src/weights.rs file
-    with open(os.path.join(crate_src_path, "weights.rs"), "w") as f:
-      f.write('\n'.join(weights))
+  def generate(self):
+    g = self.generate_functions()
+    metadata = self.metadata(g)
+    self.metadata = metadata
 
-  # Make the src/lib.rs file
-  with open(os.path.join(crate_src_path, "lib.rs"), "w") as f:
-    incs = ["mod weights;","mod model;","pub use model::Net;"] if encoded_weights else ["mod model;","pub use model::Net;"]
-    f.write('\n'.join(incs))
+    mapfilepath = os.path.join(self.settings["template_dir"],"map.yml")
+    if not os.path.exists(mapfilepath):
+      raise Exception(f"{mapfilepath} not found in template directory")
+    with open(mapfilepath, "r") as f:
+      filemap = yaml.load(f, Loader=yaml.FullLoader)
 
-  # Make the src/main.rs file
-  with open(os.path.join(crate_src_path, "main.rs"), "w") as f:
-    incs = ["mod weights;","mod model;","use model::Net;"] if encoded_weights else ["mod model;","use model::Net;"]
-    f.write('\n'.join(incs+rs_main))
+    for module_name, module in filemap.get("modules", {}).items():
+      crate_name = self.render_jinja(module['name'], metadata)
+      if module_name == "test":
+        self.test_crate_path = os.path.join(self.settings["export_dir"], crate_name)
+      for file in module.get("files", []):
+        template_path = os.path.join(self.settings["template_dir"], module_name, file['template'])
+        if not os.path.exists(template_path):
+          raise Exception(f"{template_path} from {mapfilepath} not found in template directory")
+        self.generate_file(crate_name, module_name, file, g, metadata)
 
-  ## Make a second crate to test the main crate as a library
-  crate2_name = f"rlib_test_{model_name}"
-  crate2_path = os.path.join(export_dir,crate2_name)
-  os.makedirs(crate2_path, exist_ok=True)
-  crate2_src_path = os.path.join(crate2_path, "src")
-  os.makedirs(crate2_src_path, exist_ok=True)
+  def build(self):
+    if self.test_crate_path is None:
+      raise Exception("No test crate path set")
+    # Run cargo build
+    basedir = os.getcwd()
+    os.chdir(self.test_crate_path)
+    subprocess.run(["cargo", "build", "--release"])
+    os.chdir(basedir)
+    self.test_bin_path = os.path.join(self.test_crate_path, "target", "release", os.path.basename(self.test_crate_path))
 
-  # Make main crate Cargo.toml file
-  cargo_toml = ["[package]",f"name = \"{crate2_name}\"","version = \"0.1.0\"","authors = [\"<NAME> <<EMAIL>>\"]","edition = \"2021\"",""]
-  cargo_toml += ["[dependencies]",f"{model_name} = {{ path = \"../{model_name}\" }}",""]
-  with open(os.path.join(crate2_path, "Cargo.toml"), "w") as f:
-    f.write('\n'.join(cargo_toml))
-
-  # Make the src/main.rs file
-  with open(os.path.join(crate2_src_path, "main.rs"), "w") as f:
-    f.write('\n'.join(["use model::Net;"]+rs_main))
-
-  return (crate_path, crate2_path)
-
+  def run(self, input_path, count=1):
+    cmd = [self.test_bin_path, input_path]
+    if self.weights_filename is not None: cmd.append(self.weights_filename)
+    output_path = os.path.join(os.getcwd(),"output.bin")
+    cmd.append(output_path)
+    cmd.append(str(count))
+    subprocess.run(cmd)
+    return output_path

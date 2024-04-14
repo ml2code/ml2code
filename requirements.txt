@@ -4,5 +4,7 @@ onnx
 onnxruntime
 onnx2torch
 torch
+pyaml
 #for efficientnet demo cv2
 opencv-python
+pandas

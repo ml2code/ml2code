@@ -5,6 +5,8 @@ import onnxruntime as rt
 import cv2
 import json
 import onnxruntime as rt
+from pandas.core.common import flatten
+
 
 
 # set image file dimensions to 224x224 by resizing and cropping image from center
@@ -45,14 +47,7 @@ def center_crop(img, out_height, out_width):
 
 sess = rt.InferenceSession("tmp/efficientnet-lite4-11.onnx")
 
-def inference(img):
-  img = cv2.imread(img)
-  img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-  
-  img = pre_process_edgetpu(img, (224, 224, 3))
-  
-  img_batch = np.expand_dims(img, axis=0)
-
+def inference(img_batch):
   results = sess.run(["Softmax:0"], {"images:0": img_batch})[0]
   result = reversed(results[0].argsort()[-5:])
   resultdic = {}
@@ -61,10 +56,48 @@ def inference(img):
   return resultdic
 
 
+class NumpyEncoder(json.JSONEncoder):
+    """ Special json encoder for numpy types """
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
+
+
 # load the labels text file
 labels = json.load(open("tmp/labels_map.txt", "r"))
-with open("tmp/catonnx.jpg", "rb") as f:
-  img = f.read()
 
-o = inference("tmp/catonnx.jpg")
-print(o)
+img = cv2.imread("tmp/catonnx.jpg")
+img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+img = pre_process_edgetpu(img, (224, 224, 3))
+
+img_batch = np.expand_dims(img, axis=0)
+
+results = sess.run(["Softmax:0"], {"images:0": img_batch})[0]
+result = reversed(results[0].argsort()[-5:])
+resultdic = {}
+for r in result:
+  resultdic[labels[str(r)]] = float(results[0][r])
+print(resultdic)
+
+with open("catonnx.json", "w") as f:
+  a = json.loads(json.dumps(img_batch, cls=NumpyEncoder))
+  c = json.dumps(list(flatten(a)))
+  f.write(c)
+
+import subprocess
+
+subprocess.run(["export/model_test/target/debug/model_test", "catonnx.json"]) 
+
+with open("output.json", "r") as f:
+  results = json.load(f)
+
+result = reversed(results[0].argsort()[-5:])
+resultdic = {}
+for r in result:
+  resultdic[labels[str(r)]] = float(results[0][r])
+print(resultdic)
