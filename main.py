@@ -30,6 +30,9 @@ settings = {
   "language":args.language, "model_file":args.model
 }
 
+if not os.path.exists(settings["export_dir"]):
+  os.makedirs(settings["export_dir"])
+
 set_tinygrad_device(args.language.upper())
 
 outputs = {}
@@ -47,7 +50,7 @@ elif args.language == "clang":
 else:
   raise Exception("Unknown language: " + args.language)
 c.generate()
-if (args.test or args.benchmark) and not args.nobuild:
+if (args.test or args.benchmark) or not args.nobuild:
   print("----build----------------")
   c.build()
 if args.test:

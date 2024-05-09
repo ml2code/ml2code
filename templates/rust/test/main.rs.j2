@@ -1,11 +1,11 @@
-use model::Net;
+use {{settings['model_name']}}::TinyModel;
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 
 fn main() -> io::Result<()> {
   // Initialize network
-  let mut net = Net::new();
+  let mut net = TinyModel::new();
 
   // Create an input buffer of {{input.size}} {{input.type.name}}s
   let mut input = [0.0; {{input.size}}];
