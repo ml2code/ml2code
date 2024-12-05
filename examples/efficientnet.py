@@ -62,11 +62,13 @@ if __name__ == "__main__":
 
   dataset = {
     "tmp/efficientnet-lite4-11.onnx": "https://github.com/onnx/models/raw/main/validated/vision/classification/efficientnet-lite4/model/efficientnet-lite4-11.onnx",
-    "tmp/labels_map.txt": "https://github.com/onnx/models/blob/main/validated/vision/classification/efficientnet-lite4/dependencies/labels_map.txt",
+    "tmp/labels_map.txt": "https://github.com/onnx/models/raw/refs/heads/main/validated/vision/classification/efficientnet-lite4/dependencies/labels_map.txt",
     "tmp/cat.jpg": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/Siam_lilacpoint.jpg/236px-Siam_lilacpoint.jpg"
   }
 
   # download the dataset
+  if not os.path.exists("tmp"):
+    os.mkdir("tmp")
   for k, v in dataset.items():
     if not os.path.exists(k):
       os.system(f"wget {v} -O {k}")
@@ -95,7 +97,11 @@ if __name__ == "__main__":
 
   # generate the model code
   print("Generating model code and compiling it")
-  out = subprocess.run(["./main.py", "--model", "tmp/efficientnet-lite4-11.onnx", "--language", args.language, "--build"], capture_output=True, text=True)
+  out = subprocess.run(["./main.py", "--model", "tmp/efficientnet-lite4-11.onnx", "--language", args.language], capture_output=True, text=True)
+  if out.returncode != 0:
+    print("Error generating model code")
+    print(out.stderr)
+    exit(1)
   binfile = out.stdout.split("\n")[-2]
   binfile = binfile.split(": ")[1]
   print(f"Built model as: {binfile}")

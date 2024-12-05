@@ -109,7 +109,9 @@ class SrcGenerator:
         self.generate_file(dir_name, module_name, file, g, metadata)
 
   def benchmark(self, input, count=1):
-    input_path = os.path.join(os.getcwd(),"output.bin")
+    if not os.path.exists("tmp"):
+      os.mkdir("tmp")
+    input_path = os.path.join(os.getcwd(),"tmp","input.bin")
     with open(input_path, "wb") as f:
       f.write(input.binary())
     st = time.time()
@@ -119,7 +121,9 @@ class SrcGenerator:
   def run(self, input_path, count=1):
     cmd = [self.test_bin_path, input_path]
     if self.weights_filename is not None: cmd.append(self.weights_filename)
-    output_path = os.path.join(os.getcwd(),"output.bin")
+    if not os.path.exists("tmp"):
+      os.mkdir("tmp")
+    output_path = os.path.join(os.getcwd(),"tmp","output.bin")
     cmd.append(output_path)
     cmd.append(str(count))
     subprocess.run(cmd)

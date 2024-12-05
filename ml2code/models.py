@@ -27,7 +27,10 @@ def compare_lists(n1, l1, n2, l2):
   for i in range(len(l1)):
     c1 = l1[i]
     c2 = l2[i]
-    a = abs((c2-c1)/c1)
+    if c1 == 0:
+      a = c2-c1
+    else:
+      a = abs((c2-c1)/c1)
     if a > 0.0001:
       print(f"{n1}[{i}]={c1} != {n2}[{i}]={c2}")
       return False

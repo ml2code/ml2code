@@ -2,6 +2,7 @@ numpy
 tqdm
 onnx
 onnxruntime
+onnxruntime-gpu
 onnx2torch
 torch
 pyaml

@@ -36,7 +36,6 @@ if not os.path.exists(settings["export_dir"]):
 set_tinygrad_device(args.language.upper())
 
 outputs = {}
-#om = OnnxModel("tmp/efficientnet-lite4-11.onnx")
 om = OnnxModel(settings["model_file"])
 i = om.inputs
 t = om.tiny()
@@ -58,40 +57,46 @@ if args.test:
   outputs['onnx'] = om.run(i.onnx())
   outputs['torch'] = tc.run(i.torch())
   outputs['tiny'] = t.run(i.tiny())
-  with open("input.bin", "wb") as f:
+
+  if not os.path.exists("tmp"):
+    os.mkdir("tmp")
+  with open("tmp/input.bin", "wb") as f:
     f.write(i.binary())
-  of = c.run("input.bin")
+  of = c.run("tmp/input.bin")
   outputs['compiled'] = ModelData(binary=of).onnx()
 
   failed = False
   e = ModelData(onnx=outputs['onnx']).python()
   for k,v in outputs.items():
+      # using onnx as the reference
       if k == "onnx": continue
       a = ModelData(onnx=v).python()
-      if not compare_lists('onnx', e, k, a): failed = True
+      if compare_lists('onnx', e, k, a):
+        print(f"Passed: {k} == onnx")
+      else:
+        failed = True
   print("Passed: ", not failed)
 
 if args.benchmark:
   outputs = {}
+  numproc = os.cpu_count()
   print("----benchmark----------------")
-  outputs['onnx cpu'] = om.benchmark(i.onnx(), count=args.count, device="cpu")
+  outputs['onnx cpu'] = om.benchmark(i.onnx(), count=args.count, threads=numproc, device="cpu")
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
-  # Installing the CUDAExecutionProvider wasn't trivial. This install worked for me:
-  #  pip install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
-  outputs['onnx gpu'] = om.benchmark(i.onnx(), count=args.count, device="cuda")
+  outputs['onnx gpu'] = om.benchmark(i.onnx(), count=args.count, threads=numproc, device="cuda")
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
   outputs['onnx cpu singlecore'] = om.benchmark(i.onnx(), count=args.count, threads=1, device="cpu")
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
-  outputs['torch cpu'] = tc.benchmark(i.torch(), count=args.count, device="cpu")
+  outputs['torch cpu'] = tc.benchmark(i.torch(), count=args.count, threads=numproc, device="cpu")
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
-  outputs['torch gpu'] = tc.benchmark(i.torch(), count=args.count, device="cuda")
+  outputs['torch gpu'] = tc.benchmark(i.torch(), count=args.count, threads=numproc, device="cuda")
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
   outputs['torch cpu singlecore'] = tc.benchmark(i.torch(), count=args.count, threads=1, device="cpu")
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
-  outputs[f"tiny {args.language} jit"] = t.benchmark(i.tiny(), count=args.count)
+  outputs[f"tiny {args.language} jit"] = t.benchmark(i.tiny(), threads=numproc, count=args.count)
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
   tg = om.tiny(device="CUDA")
-  outputs[f"tiny CUDA jit"] = tg.benchmark(i.tiny(), count=args.count)
+  outputs[f"tiny CUDA jit"] = tg.benchmark(i.tiny(), threads=numproc, count=args.count)
   print(f"{list(outputs.keys())[-1]}: {outputs[list(outputs.keys())[-1]]:.2f}s")
   del(tg) # oddly needs this to be deleted
   set_tinygrad_device(args.language.upper())
