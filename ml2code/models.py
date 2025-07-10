@@ -152,7 +152,7 @@ class OnnxModel(BaseModel):
     opts.log_severity_level = 3
     # device can be "CPU", "CUDA"
     provider = device.upper()+"ExecutionProvider"
-    if provider not in ort.get_available_providers(): raise Exception(f"Provider {provider} not found")
+    if provider not in ort.get_available_providers(): raise Exception(f"Provider {provider} not found in {ort.get_available_providers()}")
     session = ort.InferenceSession(self.model.SerializeToString(), opts, [provider])
     input = {self.input_names[0]: input}
     for _ in range(count):

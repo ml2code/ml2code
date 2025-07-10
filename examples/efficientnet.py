@@ -97,11 +97,11 @@ if __name__ == "__main__":
 
   # generate the model code
   print("Generating model code and compiling it")
-  out = subprocess.run(["./main.py", "--model", "tmp/efficientnet-lite4-11.onnx", "--language", args.language], capture_output=True, text=True)
+  out = subprocess.run(["uv", "run", "ml2code", "--model", "tmp/efficientnet-lite4-11.onnx", "--language", args.language], capture_output=True, text=True)
   if out.returncode != 0:
     print("Error generating model code")
     print(out.stderr)
-    exit(1)
+    #exit(1)
   binfile = out.stdout.split("\n")[-2]
   binfile = binfile.split(": ")[1]
   print(f"Built model as: {binfile}")
