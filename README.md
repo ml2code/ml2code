@@ -1,3 +1,6 @@
+# DEPRECATED, moved to bitflux-ai org
+
+
 # ml2code
 Converts onnx ML models to standalone Rust and C libraries
 
